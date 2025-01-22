@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
                         if (partNumbers.size >= 2) {
                             // Compare two part numbers
                             if (partNumbers[0].contains(partNumbers[1]) || partNumbers[1].contains(partNumbers[0])) {
-                                Log.d("Live OCR", "Part Numbers Match: ${partNumbers[0]}")
+                                Log.d("Live OCR", "Part Numbers Match: ${partNumbers[0]} & ${partNumbers[1]}")
                             } else {
                                 Log.d("Live OCR", "Part Numbers Do Not Match: ${partNumbers[0]} vs ${partNumbers[1]}")
                             }
