@@ -24,7 +24,7 @@ import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class MainActivity : ComponentActivity() {
+class SecondActivity : ComponentActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
     private val cameraPermission = Manifest.permission.CAMERA
@@ -35,15 +35,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(ActivityMainBinding.inflate(layoutInflater).root)
 
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
+        requestCameraPermission()
         findViewById<Button>(R.id.captureButton).setOnClickListener {
             captureImage()
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        cameraExecutor = Executors.newSingleThreadExecutor()
-        requestCameraPermission()
     }
 
     private fun requestCameraPermission() {
@@ -99,7 +96,6 @@ class MainActivity : ComponentActivity() {
     private fun captureImage() {
         val photoFile = File(externalMediaDirs.first(), "${System.currentTimeMillis()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-        stopCamera()
 
         imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
@@ -110,13 +106,8 @@ class MainActivity : ComponentActivity() {
 
                 override fun onError(exception: ImageCaptureException) {
                     Log.e("CameraX", "Image capture failed: ${exception.message}", exception)
-                    startCamera()
                 }
             })
-    }
-
-    private fun stopCamera() {
-        cameraExecutor.shutdown()
     }
 
     private fun processImageForOCR(imageUri: Uri) {
@@ -125,9 +116,9 @@ class MainActivity : ComponentActivity() {
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                val recognizedText = extractPartNumbers(visionText.text)
+                val recognizedText = visionText.text
                 Log.d("OCR", "Detected text: $recognizedText")
-                Toast.makeText(this, recognizedText[0], Toast.LENGTH_LONG).show()
+                Toast.makeText(this, recognizedText, Toast.LENGTH_LONG).show()
             }
             .addOnFailureListener { e ->
                 Log.e("OCR", "Text recognition failed", e)
@@ -135,13 +126,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extractPartNumbers(text: String): List<String> {
-        // Use regex to find part numbers in the format "B2X-E1631-00"
+        // Use regex to find part numbers in the format "B2X-E1631-00-00-80"
         val regex = Regex("[A-Z0-9]{3}-[A-Z0-9]{5}-[A-Z0-9]{2}")
         return regex.findAll(text).map { it.value }.toList()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopCamera()
+        cameraExecutor.shutdown()
     }
 }
