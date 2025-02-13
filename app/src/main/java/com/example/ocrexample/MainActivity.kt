@@ -1,11 +1,15 @@
 package com.example.ocrexample
 
 import android.Manifest
+import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.LayoutInflater
 import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
@@ -17,15 +21,20 @@ import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.ocrexample.databinding.ActivityMainBinding
+import com.google.common.util.concurrent.ListenableFuture
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.orhanobut.hawk.Hawk
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+
 class MainActivity : ComponentActivity() {
 
+    private lateinit var cameraProviderFuture: ListenableFuture<ProcessCameraProvider>
+    private lateinit var progressDialog: AlertDialog
     private lateinit var cameraExecutor: ExecutorService
     private val cameraPermission = Manifest.permission.CAMERA
     private val requestCodeCameraPermission = 1001
@@ -35,6 +44,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(ActivityMainBinding.inflate(layoutInflater).root)
 
+        Hawk.init(this).build()
+
         findViewById<Button>(R.id.captureButton).setOnClickListener {
             captureImage()
         }
@@ -42,8 +53,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        cameraExecutor = Executors.newSingleThreadExecutor()
-        requestCameraPermission()
+
+        val counter = Hawk.get("counter", 0)
+
+        if (counter > 20) {
+            showLimitDialog()
+        } else {
+            cameraExecutor = Executors.newSingleThreadExecutor()
+            requestCameraPermission()
+        }
     }
 
     private fun requestCameraPermission() {
@@ -74,7 +92,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
             val viewFinder: PreviewView = findViewById(R.id.viewFinder)
@@ -97,37 +115,47 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun captureImage() {
+        showProgressDialog()
         val photoFile = File(externalMediaDirs.first(), "${System.currentTimeMillis()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-        stopCamera()
 
         imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     val imageUri = Uri.fromFile(photoFile)
+                    stopCamera()
                     processImageForOCR(imageUri)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    Log.e("CameraX", "Image capture failed: ${exception.message}", exception)
+                    dismissProgressDialog()
                     startCamera()
+                    Log.e("CameraX", "Image capture failed: ${exception.message}", exception)
                 }
             })
     }
 
     private fun stopCamera() {
-        cameraExecutor.shutdown()
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            cameraProvider.unbindAll() // Stops the camera preview
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun processImageForOCR(imageUri: Uri) {
         val image = InputImage.fromFilePath(this, imageUri)
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
+        dismissProgressDialog()
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val recognizedText = extractPartNumbers(visionText.text)
-                Log.d("OCR", "Detected text: $recognizedText")
-                Toast.makeText(this, recognizedText[0], Toast.LENGTH_LONG).show()
+                if (recognizedText.isNotEmpty()) {
+                    showCustomDialog(recognizedText[0])
+                } else {
+                    Toast.makeText(this, "No Part Number Found", Toast.LENGTH_SHORT).show()
+                    startCamera()
+                }
             }
             .addOnFailureListener { e ->
                 Log.e("OCR", "Text recognition failed", e)
@@ -138,6 +166,64 @@ class MainActivity : ComponentActivity() {
         // Use regex to find part numbers in the format "B2X-E1631-00"
         val regex = Regex("[A-Z0-9]{3}-[A-Z0-9]{5}-[A-Z0-9]{2}")
         return regex.findAll(text).map { it.value }.toList()
+    }
+
+    private fun showProgressDialog(): AlertDialog {
+        progressDialog = AlertDialog.Builder(this)
+            .setView(R.layout.dialog_progress) // Custom Layout
+            .setCancelable(false)
+            .create()
+
+        progressDialog.show()
+        return progressDialog
+    }
+
+    private fun dismissProgressDialog() {
+        progressDialog.dismiss()
+    }
+
+    private fun showCustomDialog(text: String) {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_custom, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+
+        val textView = dialogView.findViewById<TextView>(R.id.tv_part_number)
+        val btnNext = dialogView.findViewById<Button>(R.id.btn_next)
+
+        textView.text = "Part Number: $text"  // Set custom text dynamically
+
+        btnNext.setOnClickListener {
+            dialog.dismiss()
+
+            val intent = Intent(this, SecondActivity::class.java)
+            intent.putExtra("PART_NUMBER", text) // Passing a string
+            startActivity(intent)
+        }
+
+        dialog.show()
+    }
+
+    private fun showLimitDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_custom, null)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+
+        val textView = dialogView.findViewById<TextView>(R.id.tv_part_number)
+        val btnNext = dialogView.findViewById<Button>(R.id.btn_next)
+
+        textView.text =
+            "Limit Apps usage 20, please reinstall application"  // Set custom text dynamically
+
+        btnNext.setOnClickListener {
+            dialog.dismiss()
+            finishAffinity()
+        }
+
+        dialog.show()
     }
 
     override fun onDestroy() {

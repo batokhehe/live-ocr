@@ -63,4 +63,5 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view.v141)
     implementation(libs.androidx.constraintlayout)
+    implementation(libs.com.orhanobut.hawk)
 }
